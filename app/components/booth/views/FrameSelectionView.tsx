@@ -1,17 +1,24 @@
 import { useState } from 'react';
 import { Button } from '~/components/ui/button';
-import { getAllFrames, getFrameById } from '~/lib/frame-config';
+import {
+  getFramesByOrientation,
+  getFrameById,
+  type FrameOrientation,
+} from '~/lib/frame-config';
 import { cn } from '~/lib/utils';
 
 interface FrameSelectionViewProps {
-  selectedImages: string[]; // 3 foto terpilih, berurutan sesuai slot
+  selectedImages: string[]; // 3 foto hasil edit, berurutan sesuai slot
   selectedFrameId: string;
   onSelectFrame: (frameId: string) => void;
   onConfirm: () => void;
   onBack: () => void;
 }
 
-type OrientationFilter = 'all' | 'vertical' | 'horizontal';
+const LAYOUTS: { id: FrameOrientation; label: string; icon: string }[] = [
+  { id: 'vertical', label: 'Vertikal', icon: '↕' },
+  { id: 'horizontal', label: 'Horizontal', icon: '↔' },
+];
 
 export function FrameSelectionView({
   selectedImages,
@@ -20,12 +27,21 @@ export function FrameSelectionView({
   onConfirm,
   onBack,
 }: FrameSelectionViewProps) {
-  const [filter, setFilter] = useState<OrientationFilter>('all');
-
-  const frames = getAllFrames().filter(
-    (f) => filter === 'all' || f.orientation === filter,
-  );
   const current = getFrameById(selectedFrameId);
+  const [orientation, setOrientation] = useState<FrameOrientation>(
+    current?.orientation ?? 'vertical',
+  );
+
+  const frames = getFramesByOrientation(orientation);
+
+  // Ganti layout -> otomatis pilih frame pertama dari layout itu
+  const handleSelectLayout = (next: FrameOrientation) => {
+    setOrientation(next);
+    if (current?.orientation !== next) {
+      const first = getFramesByOrientation(next)[0];
+      if (first) onSelectFrame(first.id);
+    }
+  };
 
   return (
     <div className="flex flex-col items-center min-h-screen bg-gradient-to-br from-blue-500 to-purple-600 text-white p-8">
@@ -33,7 +49,7 @@ export function FrameSelectionView({
         <div className="text-center space-y-2">
           <h2 className="text-5xl font-bold">Pilih Frame</h2>
           <p className="text-xl text-blue-100">
-            Pratinjau di bawah memakai 3 foto pilihanmu
+            Pilih layout, lalu frame. Pratinjau memakai 3 fotomu yang sudah diedit
           </p>
         </div>
 
@@ -74,24 +90,29 @@ export function FrameSelectionView({
 
           {/* Pilihan frame */}
           <div className="space-y-4">
-            <div className="flex justify-center gap-2">
-              {(['all', 'vertical', 'horizontal'] as const).map((f) => (
-                <Button
-                  key={f}
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setFilter(f)}
-                  className={cn(
-                    'capitalize border-2 transition-all',
-                    filter === f
-                      ? 'bg-white text-purple-600 border-white hover:bg-white'
-                      : 'bg-transparent text-white border-white/50 hover:bg-white/20 hover:border-white',
-                  )}
-                >
-                  {f}
-                </Button>
-              ))}
+            <div>
+              <p className="text-lg font-semibold text-center mb-2">Layout</p>
+              <div className="grid grid-cols-2 gap-3">
+                {LAYOUTS.map((layout) => (
+                  <Button
+                    key={layout.id}
+                    variant="outline"
+                    onClick={() => handleSelectLayout(layout.id)}
+                    className={cn(
+                      'text-xl py-6 border-2 transition-all',
+                      orientation === layout.id
+                        ? 'bg-white text-purple-600 border-white hover:bg-white'
+                        : 'bg-transparent text-white border-white/50 hover:bg-white/20 hover:border-white',
+                    )}
+                  >
+                    <span className="mr-2">{layout.icon}</span>
+                    {layout.label}
+                  </Button>
+                ))}
+              </div>
             </div>
+
+            <p className="text-lg font-semibold text-center">Frame</p>
 
             <div className="grid grid-cols-2 gap-3">
               {frames.map((frame) => (
@@ -132,7 +153,7 @@ export function FrameSelectionView({
             variant="outline"
             className="text-xl px-8 py-6 bg-transparent text-white border-2 border-white hover:bg-white/20 rounded-full"
           >
-            Ganti Foto
+            Ganti Background
           </Button>
           <Button
             onClick={onConfirm}

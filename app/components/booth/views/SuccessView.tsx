@@ -2,11 +2,12 @@ import { useState, useEffect } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Button } from '~/components/ui/button';
 import { cn } from '~/lib/utils';
+import { printImage } from '~/lib/print-image';
 
 interface SuccessViewProps {
   uploadUrl: string;
   publicId: string;
-  images: string[]; // Array of 3 captured photos (base64)
+  images: string[]; // 3 foto hasil edit (base64)
   onReset: () => void;
 }
 
@@ -121,8 +122,15 @@ export function SuccessView({
               <p>💾 Download your photo strip</p>
             </div>
 
-            {/* Start New Session button */}
-            <div className="mt-6">
+            {/* Print + Start New Session */}
+            <div className="mt-6 flex flex-wrap justify-center gap-3">
+              <Button
+                onClick={() => printImage(uploadUrl)}
+                size="lg"
+                className="text-xl px-8 py-6 bg-white text-green-700 hover:bg-green-50 rounded-full shadow-2xl"
+              >
+                Cetak Foto
+              </Button>
               <Button
                 onClick={onReset}
                 size="lg"

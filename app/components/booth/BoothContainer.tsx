@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useMemo } from 'react';
 import { useMachine } from '@xstate/react';
 import Webcam from 'react-webcam';
 import { fromPromise } from 'xstate';
@@ -6,6 +6,8 @@ import { match } from 'ts-pattern';
 import { boothMachine, TOTAL_PHOTOS } from '~/machines/boothMachine';
 import { stitchPhotos } from '~/lib/canvas-stitcher';
 import { uploadToCloudinary } from '~/lib/cloudinary-upload';
+import { renderPhoto, type PersonMask } from '~/lib/photo-edit';
+import { getSegmenter, segmentPerson } from '~/lib/person-segmentation';
 import { generateBeepSound, generateShutterSound } from '~/lib/audio-utils';
 import type { FrameConfig } from '~/lib/frame-config';
 import { IdleView } from './views/IdleView';
@@ -15,6 +17,8 @@ import { SuccessView } from './views/SuccessView';
 import { FailureView } from './views/FailureView';
 import { PhotoSelectionView } from './views/PhotoSelectionView';
 import { FrameSelectionView } from './views/FrameSelectionView';
+import { ToneSelectionView } from './views/ToneSelectionView';
+import { BackgroundSelectionView } from './views/BackgroundSelectionView';
 
 export function BoothContainer() {
   const webcamRef = useRef<Webcam | null>(null);
@@ -27,6 +31,32 @@ export function BoothContainer() {
   const [state, send] = useMachine(
     boothMachine.provide({
       actors: {
+        segmentPhotos: fromPromise(async ({ input }) => {
+          const { images, selectedIndexes, cache } = input as {
+            images: string[];
+            selectedIndexes: number[];
+            cache: Record<number, PersonMask>;
+          };
+          const next = { ...cache };
+          // Berurutan (bukan paralel) supaya pemakaian memori tetap kecil
+          for (const i of selectedIndexes) {
+            if (!next[i]) next[i] = await segmentPerson(images[i]);
+          }
+          return next;
+        }),
+        applyEdits: fromPromise(async ({ input }) => {
+          const { images, toneId, backgroundId, masks } = input as {
+            images: string[];
+            toneId: string;
+            backgroundId: string;
+            masks: (PersonMask | undefined)[];
+          };
+          return await Promise.all(
+            images.map((src, i) =>
+              renderPhoto({ src, toneId, backgroundId, mask: masks[i] }),
+            ),
+          );
+        }),
         stitchPhotos: fromPromise(async ({ input }) => {
           const { images, frameConfig } = input as {
             images: string[];
@@ -45,6 +75,22 @@ export function BoothContainer() {
       }
     })
   );
+
+  // Foto terpilih & mask-nya (di-memo agar tidak memicu render ulang pratinjau)
+  const { images, selectedIndexes, maskCache } = state.context;
+  const selectedImages = useMemo(
+    () => selectedIndexes.map((i) => images[i]),
+    [selectedIndexes, images],
+  );
+  const selectedMasks = useMemo(
+    () => selectedIndexes.map((i) => maskCache[i]),
+    [selectedIndexes, maskCache],
+  );
+
+  // Muat model pemisah background lebih awal (selama sesi foto berjalan)
+  useEffect(() => {
+    getSegmenter().catch(() => {});
+  }, []);
 
   // Handle webcam ready
   const handleWebcamReady = useCallback(() => {
@@ -194,11 +240,39 @@ useEffect(() => {
         onStartOver={() => send({ type: 'RESET' })}
       />
     ))
+    .with('toning', () => (
+      <ToneSelectionView
+        images={selectedImages}
+        selectedToneId={state.context.selectedToneId}
+        onSelectTone={(toneId: string) => send({ type: 'SELECT_TONE', toneId })}
+        onConfirm={() => send({ type: 'CONFIRM_TONE' })}
+        onBack={() => send({ type: 'BACK' })}
+      />
+    ))
+    .with('segmenting', () => (
+      <ProcessingView message="Menyiapkan editor background..." />
+    ))
+    .with('background', () => (
+      <BackgroundSelectionView
+        images={selectedImages}
+        masks={selectedMasks}
+        toneId={state.context.selectedToneId}
+        selectedBackgroundId={state.context.selectedBackgroundId}
+        segmentationError={state.context.segmentationError}
+        onSelectBackground={(backgroundId: string) =>
+          send({ type: 'SELECT_BACKGROUND', backgroundId })
+        }
+        onConfirm={() => send({ type: 'CONFIRM_BACKGROUND' })}
+        onBack={() => send({ type: 'BACK' })}
+        onRetry={() => send({ type: 'RETRY_SEGMENTATION' })}
+      />
+    ))
+    .with('applyingEdits', () => (
+      <ProcessingView message="Menerapkan editan fotomu..." />
+    ))
     .with('framing', () => (
       <FrameSelectionView
-        selectedImages={state.context.selectedIndexes.map(
-          (i) => state.context.images[i],
-        )}
+        selectedImages={state.context.editedImages}
         selectedFrameId={state.context.selectedFrameId}
         onSelectFrame={(frameId: string) => send({ type: 'SELECT_FRAME', frameId })}
         onConfirm={() => send({ type: 'CONFIRM_FRAME' })}
@@ -215,7 +289,7 @@ useEffect(() => {
       <SuccessView
         uploadUrl={state.context.uploadUrl!}
         publicId={state.context.publicId!}
-        images={state.context.selectedIndexes.map((i) => state.context.images[i])}
+        images={state.context.editedImages}
         onReset={() => send({ type: 'RESET' })}
       />
     ))

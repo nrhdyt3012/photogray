@@ -1,5 +1,6 @@
 import { assign, createMachine, fromPromise } from 'xstate';
 import { getDefaultFrame, getFrameById, type FrameConfig } from '~/lib/frame-config';
+import type { PersonMask } from '~/lib/photo-edit';
 
 // Jumlah foto yang diambil, dan jumlah foto yang dipilih untuk masuk frame
 export const TOTAL_PHOTOS = 10;
@@ -9,6 +10,11 @@ export interface BoothContext {
   images: string[]; // semua foto hasil jepretan (base64 data URLs), maks TOTAL_PHOTOS
   currentImageIndex: number; // 0-9 untuk progress
   selectedIndexes: number[]; // index foto terpilih, urutannya = urutan slot di frame
+  selectedToneId: string; // tone foto (original, warm, bright, bw, cold, vivid)
+  selectedBackgroundId: string; // background pengganti ('original' = tidak diganti)
+  maskCache: Record<number, PersonMask>; // mask orang per index foto (hasil segmentasi)
+  segmentationError: string | null; // pesan jika pemisahan background gagal
+  editedImages: string[]; // 3 foto hasil edit (tone + background), siap masuk frame
   finalStripBlob: Blob | null; // hasil stitching lokal
   uploadUrl: string | null; // Cloudinary secure_url
   publicId: string | null; // Cloudinary public_id untuk QR code
@@ -26,6 +32,11 @@ export type BoothEvent =
   | { type: 'CAPTURE_ERROR'; error: string }
   | { type: 'TOGGLE_PHOTO'; index: number }
   | { type: 'CONFIRM_SELECTION' }
+  | { type: 'SELECT_TONE'; toneId: string }
+  | { type: 'CONFIRM_TONE' }
+  | { type: 'SELECT_BACKGROUND'; backgroundId: string }
+  | { type: 'CONFIRM_BACKGROUND' }
+  | { type: 'RETRY_SEGMENTATION' }
   | { type: 'SELECT_FRAME'; frameId: string }
   | { type: 'CONFIRM_FRAME' }
   | { type: 'BACK' }
@@ -38,6 +49,19 @@ export type BoothEvent =
 
 export interface CountdownInput {
   duration: number;
+}
+
+export interface SegmentInput {
+  images: string[]; // semua foto hasil jepretan
+  selectedIndexes: number[];
+  cache: Record<number, PersonMask>;
+}
+
+export interface EditInput {
+  images: string[]; // 3 foto terpilih
+  toneId: string;
+  backgroundId: string;
+  masks: (PersonMask | undefined)[];
 }
 
 export interface StitchInput {
@@ -63,6 +87,11 @@ export const boothMachine = createMachine(
       images: [],
       currentImageIndex: 0,
       selectedIndexes: [],
+      selectedToneId: 'original',
+      selectedBackgroundId: 'original',
+      maskCache: {},
+      segmentationError: null,
+      editedImages: [],
       finalStripBlob: null,
       uploadUrl: null,
       publicId: null,
@@ -77,6 +106,11 @@ export const boothMachine = createMachine(
           images: [],
           currentImageIndex: 0,
           selectedIndexes: [],
+          selectedToneId: 'original',
+          selectedBackgroundId: 'original',
+          maskCache: {},
+          segmentationError: null,
+          editedImages: [],
           finalStripBlob: null,
           uploadUrl: null,
           publicId: null,
@@ -144,7 +178,6 @@ export const boothMachine = createMachine(
 
       // Pilih 3 dari 10 foto
       selecting: {
-        entry: assign({ selectedIndexes: [] }),
         on: {
           TOGGLE_PHOTO: {
             actions: assign({
@@ -163,13 +196,104 @@ export const boothMachine = createMachine(
           CONFIRM_SELECTION: {
             guard: ({ context }) =>
               context.selectedIndexes.length === REQUIRED_PHOTOS,
-            target: 'framing',
+            target: 'toning',
           },
           RESET: 'idle',
         },
       },
 
-      // Pilih frame, dengan preview dari 3 foto terpilih
+      // Pilih tone foto (warm, bright, B&W, cold, vivid)
+      toning: {
+        on: {
+          SELECT_TONE: {
+            actions: assign({ selectedToneId: ({ event }) => event.toneId }),
+          },
+          CONFIRM_TONE: 'segmenting',
+          BACK: 'selecting',
+        },
+      },
+
+      // Memisahkan orang dari background (sekali per foto, hasilnya di-cache)
+      segmenting: {
+        invoke: {
+          id: 'segmentService',
+          src: 'segmentPhotos',
+          input: ({ context }) => ({
+            images: context.images,
+            selectedIndexes: context.selectedIndexes,
+            cache: context.maskCache,
+          }),
+          onDone: {
+            target: 'background',
+            actions: assign({
+              maskCache: ({ event }) =>
+                event.output as Record<number, PersonMask>,
+              segmentationError: null,
+            }),
+          },
+          onError: {
+            // Tetap lanjut ke halaman background, tapi hanya "Original" yang bisa dipilih
+            target: 'background',
+            actions: assign({
+              selectedBackgroundId: 'original',
+              segmentationError: ({ event }) =>
+                event.error instanceof Error
+                  ? event.error.message
+                  : 'Pemisahan background gagal',
+            }),
+          },
+        },
+      },
+
+      // Pilih background pengganti di belakang orang
+      background: {
+        on: {
+          SELECT_BACKGROUND: {
+            actions: assign({
+              selectedBackgroundId: ({ event }) => event.backgroundId,
+            }),
+          },
+          RETRY_SEGMENTATION: 'segmenting',
+          CONFIRM_BACKGROUND: {
+            guard: ({ context }) =>
+              context.selectedBackgroundId === 'original' ||
+              context.selectedIndexes.every((i) => !!context.maskCache[i]),
+            target: 'applyingEdits',
+          },
+          BACK: 'toning',
+        },
+      },
+
+      // Terapkan tone + background ke 3 foto terpilih (resolusi penuh)
+      applyingEdits: {
+        invoke: {
+          id: 'editService',
+          src: 'applyEdits',
+          input: ({ context }) => ({
+            images: context.selectedIndexes.map((i) => context.images[i]),
+            toneId: context.selectedToneId,
+            backgroundId: context.selectedBackgroundId,
+            masks: context.selectedIndexes.map((i) => context.maskCache[i]),
+          }),
+          onDone: {
+            target: 'framing',
+            actions: assign({
+              editedImages: ({ event }) => event.output as string[],
+            }),
+          },
+          onError: {
+            target: 'failure',
+            actions: assign({
+              error: ({ event }) =>
+                event.error instanceof Error
+                  ? event.error.message
+                  : 'Edit foto gagal',
+            }),
+          },
+        },
+      },
+
+      // Pilih layout (vertikal/horizontal) lalu frame, dengan preview dari 3 foto hasil edit
       framing: {
         on: {
           SELECT_FRAME: {
@@ -178,7 +302,7 @@ export const boothMachine = createMachine(
             }),
           },
           CONFIRM_FRAME: 'stitching',
-          BACK: 'selecting',
+          BACK: 'background',
         },
       },
 
@@ -192,8 +316,8 @@ export const boothMachine = createMachine(
               throw new Error(`Frame not found: ${context.selectedFrameId}`);
             }
             return {
-              // Hanya 3 foto terpilih, sesuai urutan pilihan
-              images: context.selectedIndexes.map((i) => context.images[i]),
+              // 3 foto terpilih yang sudah diedit, sesuai urutan pilihan
+              images: context.editedImages,
               frameConfig,
             };
           },
@@ -272,6 +396,12 @@ export const boothMachine = createMachine(
   },
   {
     actors: {
+      segmentPhotos: fromPromise<Record<number, PersonMask>, SegmentInput>(async () => {
+        throw new Error('Segment service not provided');
+      }),
+      applyEdits: fromPromise<string[], EditInput>(async () => {
+        throw new Error('Edit service not provided');
+      }),
       stitchPhotos: fromPromise<Blob, StitchInput>(async () => {
         throw new Error('Stitch service not provided');
       }),
