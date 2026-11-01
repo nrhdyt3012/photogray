@@ -10,7 +10,6 @@ import { generateBeepSound, generateShutterSound } from '~/lib/audio-utils';
 import type { FrameConfig } from '~/lib/frame-config';
 import { IdleView } from './views/IdleView';
 import { CountdownView } from './views/CountdownView';
-import { CaptureView } from './views/CaptureView';
 import { ProcessingView } from './views/ProcessingView';
 import { SuccessView } from './views/SuccessView';
 import { FailureView } from './views/FailureView';
@@ -173,18 +172,13 @@ useEffect(() => {
     .with('idle', () => (
       <IdleView onStart={() => send({ type: 'START' })} />
     ))
-    .with('countdown', () => (
+    .with('countdown', 'capture', () => (
       <CountdownView
         countdown={state.context.countdown}
         webcamRef={webcamRef}
-        currentPhotoNumber={state.context.currentImageIndex + 1}
+        currentPhotoNumber={Math.min(state.context.currentImageIndex + 1, TOTAL_PHOTOS)}
         totalPhotos={TOTAL_PHOTOS}
-        onWebcamReady={handleWebcamReady}
-      />
-    ))
-    .with('capture', () => (
-      <CaptureView
-        webcamRef={webcamRef}
+        isCapturing={state.matches('capture')}
         onWebcamReady={handleWebcamReady}
       />
     ))

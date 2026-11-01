@@ -91,7 +91,7 @@ export default function PhotoRetrieval() {
             onClick={handleShare}
             size="lg"
             variant="outline"
-            className="flex-1 text-lg py-6 bg-white bg-opacity-20 hover:bg-opacity-30 text-white border-2 border-white rounded-full"
+            className="flex-1 text-lg py-6 bg-white/20 hover:bg-white/30 text-white border-2 border-white rounded-full"
           >
             📤 Share
           </Button>

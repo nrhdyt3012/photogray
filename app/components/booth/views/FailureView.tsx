@@ -20,7 +20,7 @@ export function FailureView({ error, onRetry }: FailureViewProps) {
         </div>
 
         {/* Error message */}
-        <div className="bg-white bg-opacity-20 backdrop-blur-sm p-6 rounded-xl">
+        <div className="bg-white/20 backdrop-blur-sm p-6 rounded-xl">
           <p className="text-lg font-mono text-white">
             {error}
           </p>

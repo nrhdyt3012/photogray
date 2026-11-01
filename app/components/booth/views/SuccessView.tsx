@@ -127,7 +127,7 @@ export function SuccessView({
                 onClick={onReset}
                 size="lg"
                 variant="outline"
-                className="text-xl px-8 py-6 bg-white bg-opacity-20 hover:bg-opacity-30 text-white border-2 border-white rounded-full"
+                className="text-xl px-8 py-6 bg-white/20 hover:bg-white/30 text-white border-2 border-white rounded-full"
               >
                 Start New Session
               </Button>
