@@ -12,7 +12,7 @@ export function printImage(url: string) {
   }
   doc.open();
   doc.write(
-    `<!doctype html><html><head><style>@page{margin:0}html,body{margin:0;height:100%}img{display:block;width:100%;height:100%;object-fit:contain}</style></head><body><img src="${url}"></body></html>`,
+    `<!doctype html><html><head><style>@page{size:4in 6in;margin:0}html,body{margin:0;height:100%}img{display:block;width:100%;height:100%;object-fit:contain}</style></head><body><img src="${url}"></body></html>`,
   );
   doc.close();
 

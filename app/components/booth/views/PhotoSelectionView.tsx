@@ -1,10 +1,10 @@
 import { Button } from '~/components/ui/button';
 import { cn } from '~/lib/utils';
-import { REQUIRED_PHOTOS } from '~/machines/boothMachine';
 
 interface PhotoSelectionViewProps {
   images: string[];
   selectedIndexes: number[]; // urutan = urutan slot di frame
+  requiredPhotos: number; // jumlah foto yang harus dipilih (dari paket)
   onToggle: (index: number) => void;
   onConfirm: () => void;
   onStartOver: () => void;
@@ -13,22 +13,23 @@ interface PhotoSelectionViewProps {
 export function PhotoSelectionView({
   images,
   selectedIndexes,
+  requiredPhotos,
   onToggle,
   onConfirm,
   onStartOver,
 }: PhotoSelectionViewProps) {
-  const isComplete = selectedIndexes.length === REQUIRED_PHOTOS;
+  const isComplete = selectedIndexes.length === requiredPhotos;
 
   return (
     <div className="flex flex-col items-center min-h-screen bg-gradient-to-br from-blue-500 to-purple-600 text-white p-8">
       <div className="w-full max-w-6xl space-y-6 text-center">
         <div className="space-y-2">
-          <h2 className="text-5xl font-bold">Pilih {REQUIRED_PHOTOS} Foto Terbaikmu</h2>
+          <h2 className="text-5xl font-bold">Pilih {requiredPhotos} Foto Terbaikmu</h2>
           <p className="text-xl text-blue-100">
             Ketuk foto untuk memilih. Urutan pilihan = urutan di frame.
           </p>
           <p className="text-2xl font-semibold">
-            {selectedIndexes.length} / {REQUIRED_PHOTOS} dipilih
+            {selectedIndexes.length} / {requiredPhotos} dipilih
           </p>
         </div>
 

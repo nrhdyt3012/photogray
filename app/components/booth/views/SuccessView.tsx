@@ -3,11 +3,14 @@ import { QRCodeSVG } from 'qrcode.react';
 import { Button } from '~/components/ui/button';
 import { cn } from '~/lib/utils';
 import { printImage } from '~/lib/print-image';
+import { composePrintSheet } from '~/lib/print-sheet';
+import type { PrintLayout } from '~/machines/boothMachine';
 
 interface SuccessViewProps {
   uploadUrl: string;
   publicId: string;
-  images: string[]; // 3 foto hasil edit (base64)
+  images: string[]; // foto terpilih hasil edit (base64)
+  printLayout: PrintLayout; // half = 4R dibagi 2, full = 4R penuh
   onReset: () => void;
 }
 
@@ -15,8 +18,21 @@ export function SuccessView({
   uploadUrl,
   publicId,
   images,
+  printLayout,
   onReset,
 }: SuccessViewProps) {
+  const [printing, setPrinting] = useState(false);
+  const handlePrint = async () => {
+    setPrinting(true);
+    try {
+      const sheet = await composePrintSheet(uploadUrl, printLayout);
+      printImage(sheet);
+      setTimeout(() => URL.revokeObjectURL(sheet), 60000);
+    } finally {
+      setPrinting(false);
+    }
+  };
+
   // Detect image orientation
   const [imageOrientation, setImageOrientation] = useState<
     'vertical' | 'horizontal'
@@ -125,11 +141,12 @@ export function SuccessView({
             {/* Print + Start New Session */}
             <div className="mt-6 flex flex-wrap justify-center gap-3">
               <Button
-                onClick={() => printImage(uploadUrl)}
+                onClick={handlePrint}
+                disabled={printing}
                 size="lg"
                 className="text-xl px-8 py-6 bg-white text-green-700 hover:bg-green-50 rounded-full shadow-2xl"
               >
-                Cetak Foto
+                {printing ? 'Menyiapkan...' : printLayout === 'half' ? 'Cetak (4R dibagi 2)' : 'Cetak (4R penuh)'}
               </Button>
               <Button
                 onClick={onReset}

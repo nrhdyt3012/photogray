@@ -2,12 +2,25 @@ import { assign, createMachine, fromPromise } from 'xstate';
 import { getDefaultFrame, getFrameById, type FrameConfig } from '~/lib/frame-config';
 import type { PersonMask } from '~/lib/photo-edit';
 
-// Jumlah foto yang diambil, dan jumlah foto yang dipilih untuk masuk frame
-export const TOTAL_PHOTOS = 10;
-export const REQUIRED_PHOTOS = 3;
+// Nilai awal saja. Jumlah foto sebenarnya datang dari paket yang dibayar (event START).
+export const DEFAULT_TOTAL_PHOTOS = 10;
+export const DEFAULT_REQUIRED_PHOTOS = 3;
+
+export type PrintLayout = 'half' | 'full';
+
+export interface StartParams {
+  transactionId: string;
+  totalPhotos: number; // jumlah foto yang diambil
+  requiredPhotos: number; // jumlah foto yang dipilih untuk masuk frame
+  printLayout: PrintLayout; // half = 4R dibagi 2, full = 4R penuh
+}
 
 export interface BoothContext {
-  images: string[]; // semua foto hasil jepretan (base64 data URLs), maks TOTAL_PHOTOS
+  transactionId: string | null; // transaksi kasir yang sedang dijalankan
+  totalPhotos: number;
+  requiredPhotos: number;
+  printLayout: PrintLayout;
+  images: string[]; // semua foto hasil jepretan (base64 data URLs), maks totalPhotos
   currentImageIndex: number; // 0-9 untuk progress
   selectedIndexes: number[]; // index foto terpilih, urutannya = urutan slot di frame
   selectedToneId: string; // tone foto (original, warm, bright, bw, cold, vivid)
@@ -25,7 +38,7 @@ export interface BoothContext {
 }
 
 export type BoothEvent =
-  | { type: 'START' }
+  | ({ type: 'START' } & StartParams)
   | { type: 'COUNTDOWN_TICK' }
   | { type: 'COUNTDOWN_DONE' }
   | { type: 'CAPTURE_DONE'; image: string }
@@ -84,6 +97,10 @@ export const boothMachine = createMachine(
       events: BoothEvent;
     },
     context: {
+      transactionId: null,
+      totalPhotos: DEFAULT_TOTAL_PHOTOS,
+      requiredPhotos: DEFAULT_REQUIRED_PHOTOS,
+      printLayout: 'half',
       images: [],
       currentImageIndex: 0,
       selectedIndexes: [],
@@ -103,6 +120,10 @@ export const boothMachine = createMachine(
     states: {
       idle: {
         entry: assign({
+          transactionId: null,
+          totalPhotos: DEFAULT_TOTAL_PHOTOS,
+          requiredPhotos: DEFAULT_REQUIRED_PHOTOS,
+          printLayout: 'half' as PrintLayout,
           images: [],
           currentImageIndex: 0,
           selectedIndexes: [],
@@ -120,7 +141,17 @@ export const boothMachine = createMachine(
           selectedFrameId: getDefaultFrame().id,
         }),
         on: {
-          START: 'countdown',
+          START: {
+            target: 'countdown',
+            actions: assign({
+              transactionId: ({ event }) => event.transactionId,
+              totalPhotos: ({ event }) => event.totalPhotos,
+              requiredPhotos: ({ event }) => event.requiredPhotos,
+              printLayout: ({ event }) => event.printLayout,
+              selectedFrameId: ({ event }) =>
+                getDefaultFrame(event.requiredPhotos).id,
+            }),
+          },
         },
       },
 
@@ -167,7 +198,7 @@ export const boothMachine = createMachine(
       checkProgress: {
         always: [
           {
-            guard: ({ context }) => context.images.length < TOTAL_PHOTOS,
+            guard: ({ context }) => context.images.length < context.totalPhotos,
             target: 'countdown',
           },
           {
@@ -176,7 +207,7 @@ export const boothMachine = createMachine(
         ],
       },
 
-      // Pilih 3 dari 10 foto
+      // Pilih sejumlah foto (sesuai paket) dari semua foto yang diambil
       selecting: {
         on: {
           TOGGLE_PHOTO: {
@@ -186,7 +217,7 @@ export const boothMachine = createMachine(
                 if (selectedIndexes.includes(event.index)) {
                   return selectedIndexes.filter((i) => i !== event.index);
                 }
-                if (selectedIndexes.length >= REQUIRED_PHOTOS) {
+                if (selectedIndexes.length >= context.requiredPhotos) {
                   return selectedIndexes;
                 }
                 return [...selectedIndexes, event.index];
@@ -195,7 +226,7 @@ export const boothMachine = createMachine(
           },
           CONFIRM_SELECTION: {
             guard: ({ context }) =>
-              context.selectedIndexes.length === REQUIRED_PHOTOS,
+              context.selectedIndexes.length === context.requiredPhotos,
             target: 'toning',
           },
           RESET: 'idle',

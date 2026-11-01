@@ -1,15 +1,18 @@
-import { useEffect, useRef, useCallback, useMemo } from 'react';
+import { useEffect, useRef, useCallback, useMemo, useState } from 'react';
 import { useMachine } from '@xstate/react';
 import Webcam from 'react-webcam';
 import { fromPromise } from 'xstate';
 import { match } from 'ts-pattern';
-import { boothMachine, TOTAL_PHOTOS } from '~/machines/boothMachine';
+import { boothMachine } from '~/machines/boothMachine';
+import { getSupabase } from '~/lib/supabase/client';
+import { fetchKioskStatus, kioskComplete, kioskStart } from '~/lib/kiosk';
+import type { KioskStatus } from '~/lib/supabase/types';
 import { stitchPhotos } from '~/lib/canvas-stitcher';
 import { uploadToCloudinary } from '~/lib/cloudinary-upload';
 import { renderPhoto, type PersonMask } from '~/lib/photo-edit';
 import { getSegmenter, segmentPerson } from '~/lib/person-segmentation';
 import { generateBeepSound, generateShutterSound } from '~/lib/audio-utils';
-import type { FrameConfig } from '~/lib/frame-config';
+import { setFrames, type FrameConfig, type FrameDbRow } from '~/lib/frame-config';
 import { IdleView } from './views/IdleView';
 import { CountdownView } from './views/CountdownView';
 import { ProcessingView } from './views/ProcessingView';
@@ -20,7 +23,7 @@ import { FrameSelectionView } from './views/FrameSelectionView';
 import { ToneSelectionView } from './views/ToneSelectionView';
 import { BackgroundSelectionView } from './views/BackgroundSelectionView';
 
-export function BoothContainer() {
+export function BoothContainer({ code }: { code: string }) {
   const webcamRef = useRef<Webcam | null>(null);
   const beepAudioRef = useRef<HTMLAudioElement | null>(null);
   const shutterAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -75,6 +78,82 @@ export function BoothContainer() {
       }
     })
   );
+
+  // ---- Status ruangan dari kasir (kunci tombol Start) ----
+  const [kiosk, setKiosk] = useState<KioskStatus | null>(null);
+  const [connectionError, setConnectionError] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const completedRef = useRef<string | null>(null);
+
+  const refreshKiosk = useCallback(async () => {
+    try {
+      setKiosk(await fetchKioskStatus(code));
+      setConnectionError(false);
+    } catch {
+      setConnectionError(true);
+    }
+  }, [code]);
+
+  // Muat frame dari database (jika gagal, frame bawaan tetap dipakai)
+  useEffect(() => {
+    getSupabase()
+      .from('frames')
+      .select('*')
+      .eq('is_active', true)
+      .order('sort_order')
+      .then(({ data }) => {
+        if (data) setFrames(data as FrameDbRow[]);
+      });
+  }, []);
+
+  // Pantau transaksi dari kasir selama layar idle
+  useEffect(() => {
+    if (!state.matches('idle')) return;
+    refreshKiosk();
+    const timer = setInterval(refreshKiosk, 2000);
+    return () => clearInterval(timer);
+  }, [state.value, refreshKiosk]);
+
+  const handleStart = useCallback(async () => {
+    setStarting(true);
+    try {
+      const result = await kioskStart(code);
+      if (result.ok) {
+        send({
+          type: 'START',
+          transactionId: result.transaction_id!,
+          totalPhotos: result.photos_taken!,
+          requiredPhotos: result.photos_selected!,
+          printLayout: result.print_layout!,
+        });
+      } else {
+        await refreshKiosk(); // kasir membatalkan / sesi sudah dipakai
+      }
+    } catch {
+      setConnectionError(true);
+    } finally {
+      setStarting(false);
+    }
+  }, [code, send, refreshKiosk]);
+
+  // Foto sudah terunggah: tandai transaksi selesai (ruangan terkunci lagi)
+  useEffect(() => {
+    if (!state.matches('success')) return;
+    const { transactionId, uploadUrl, publicId } = state.context;
+    if (!transactionId || !uploadUrl || !publicId) return;
+    if (completedRef.current === transactionId) return;
+    completedRef.current = transactionId;
+    (async () => {
+      for (let attempt = 0; attempt < 5; attempt++) {
+        try {
+          await kioskComplete(code, uploadUrl, publicId);
+          return;
+        } catch {
+          await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)));
+        }
+      }
+    })();
+  }, [state.value, code]);
 
   // Foto terpilih & mask-nya (di-memo agar tidak memicu render ulang pratinjau)
   const { images, selectedIndexes, maskCache } = state.context;
@@ -216,14 +295,37 @@ useEffect(() => {
   // Render appropriate view based on state using pattern matching
   return match(state.value)
     .with('idle', () => (
-      <IdleView onStart={() => send({ type: 'START' })} />
+      <IdleView
+        onStart={handleStart}
+        roomName={
+          kiosk?.found
+            ? `${kiosk.branch_name} · ${kiosk.room_name}`
+            : 'Menghubungkan...'
+        }
+        session={
+          kiosk?.transaction
+            ? {
+                status: kiosk.transaction.status,
+                packageName: kiosk.transaction.package_name,
+                photosTaken: kiosk.transaction.photos_taken,
+                photosSelected: kiosk.transaction.photos_selected,
+                printLayout: kiosk.transaction.print_layout,
+              }
+            : null
+        }
+        starting={starting}
+        connectionError={connectionError}
+      />
     ))
     .with('countdown', 'capture', () => (
       <CountdownView
         countdown={state.context.countdown}
         webcamRef={webcamRef}
-        currentPhotoNumber={Math.min(state.context.currentImageIndex + 1, TOTAL_PHOTOS)}
-        totalPhotos={TOTAL_PHOTOS}
+        currentPhotoNumber={Math.min(
+          state.context.currentImageIndex + 1,
+          state.context.totalPhotos,
+        )}
+        totalPhotos={state.context.totalPhotos}
         isCapturing={state.matches('capture')}
         onWebcamReady={handleWebcamReady}
       />
@@ -235,6 +337,7 @@ useEffect(() => {
       <PhotoSelectionView
         images={state.context.images}
         selectedIndexes={state.context.selectedIndexes}
+        requiredPhotos={state.context.requiredPhotos}
         onToggle={(index: number) => send({ type: 'TOGGLE_PHOTO', index })}
         onConfirm={() => send({ type: 'CONFIRM_SELECTION' })}
         onStartOver={() => send({ type: 'RESET' })}
@@ -290,6 +393,7 @@ useEffect(() => {
         uploadUrl={state.context.uploadUrl!}
         publicId={state.context.publicId!}
         images={state.context.editedImages}
+        printLayout={state.context.printLayout}
         onReset={() => send({ type: 'RESET' })}
       />
     ))

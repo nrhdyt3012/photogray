@@ -1,21 +1,23 @@
-import type { Route } from "./+types/_index";
-import { BoothContainer } from "~/components/booth/BoothContainer";
+import { Link } from "react-router";
 
-export function meta({}: Route.MetaArgs) {
-  return [
-    { title: "Snap & Go Photobooth" },
-    { name: "description", content: "Your instant photobooth experience" },
-    {
-      name: "viewport",
-      content: "width=device-width, initial-scale=1, user-scalable=no",
-    },
-  ];
+export function meta() {
+  return [{ title: "Snap & Go Photobooth" }];
 }
 
-export default function Index() {
+export default function Home() {
   return (
-    <div className="w-full min-h-screen">
-      <BoothContainer />
-    </div>
+    <main className="flex min-h-screen flex-col items-center justify-center bg-slate-900 p-8 text-center text-white">
+      <h1 className="font-display text-6xl font-bold tracking-tight">Snap &amp; Go</h1>
+      <p className="mt-3 max-w-md text-slate-300">
+        Layar booth dibuka lewat alamat khusus tiap ruangan. Petugas bisa menyalinnya dari menu
+        Ruangan di panel kasir.
+      </p>
+      <Link
+        to="/admin"
+        className="mt-8 rounded-full bg-amber-300 px-8 py-3 font-semibold text-slate-900 transition hover:bg-amber-200"
+      >
+        Masuk panel kasir / owner
+      </Link>
+    </main>
   );
 }

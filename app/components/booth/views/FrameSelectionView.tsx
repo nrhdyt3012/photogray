@@ -32,13 +32,13 @@ export function FrameSelectionView({
     current?.orientation ?? 'vertical',
   );
 
-  const frames = getFramesByOrientation(orientation);
+  const frames = getFramesByOrientation(orientation, selectedImages.length);
 
   // Ganti layout -> otomatis pilih frame pertama dari layout itu
   const handleSelectLayout = (next: FrameOrientation) => {
     setOrientation(next);
     if (current?.orientation !== next) {
-      const first = getFramesByOrientation(next)[0];
+      const first = getFramesByOrientation(next, selectedImages.length)[0];
       if (first) onSelectFrame(first.id);
     }
   };

@@ -1,5 +1,5 @@
 {
-  "name": "kiosk",
+  "name": "Photogray",
   "private": true,
   "type": "module",
   "scripts": {
@@ -13,6 +13,7 @@
     "@radix-ui/react-slot": "^1.2.4",
     "@react-router/node": "^7.9.2",
     "@react-router/serve": "^7.9.2",
+    "@supabase/supabase-js": "^2.118.0",
     "@xstate/react": "^6.0.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

@@ -1,13 +1,34 @@
 import { useState, useEffect } from 'react';
 import { Button } from '~/components/ui/button';
 
+export interface IdleSession {
+  status: 'ready' | 'in_progress';
+  packageName: string;
+  photosTaken: number;
+  photosSelected: number;
+  printLayout: 'half' | 'full';
+}
+
 interface IdleViewProps {
   onStart: () => void;
+  roomName: string;
+  /** Sesi yang sudah dibayar kasir untuk ruangan ini (null = belum ada). */
+  session: IdleSession | null;
+  starting: boolean;
+  connectionError: boolean;
 }
 
 type CameraStatus = 'checking' | 'granted' | 'denied' | 'error';
 
-export function IdleView({ onStart }: IdleViewProps) {
+export function IdleView({
+  onStart,
+  roomName,
+  session,
+  starting,
+  connectionError,
+}: IdleViewProps) {
+  // Tombol hanya menyala jika kasir sudah menyimpan transaksi untuk ruangan ini
+  const unlocked = session?.status === 'ready';
   const [cameraStatus, setCameraStatus] =
     useState<CameraStatus>('checking');
 
@@ -70,9 +91,7 @@ export function IdleView({ onStart }: IdleViewProps) {
         <h1 className="text-6xl font-bold animate-pulse">
           Snap & Go
         </h1>
-        <p className="text-2xl text-blue-100">
-          Your instant photobooth experience
-        </p>
+        <p className="text-2xl text-blue-100">{roomName}</p>
 
         {/* Camera status indicator */}
         <div className="mt-8">
@@ -108,18 +127,37 @@ export function IdleView({ onStart }: IdleViewProps) {
         <div className="mt-12">
           <Button
             onClick={onStart}
-            disabled={cameraStatus !== 'granted'}
+            disabled={cameraStatus !== 'granted' || !unlocked || starting}
             size="lg"
             className="text-2xl px-12 py-8 bg-white text-purple-600 hover:bg-blue-50 hover:scale-105 transition-all duration-300 rounded-full shadow-2xl disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
           >
-            Start Photo Session
+            {starting ? 'Memulai...' : 'Start Photo Session'}
           </Button>
         </div>
 
-        <div className="mt-16 text-blue-100 space-y-2">
-          <p className="text-lg">✓ Takes 10 photos with countdown</p>
-          <p className="text-lg">✓ Pick your 3 best shots &amp; a frame</p>
-          <p className="text-lg">✓ Download via QR code</p>
+        <div className="mt-10 text-blue-100 space-y-2 min-h-[7rem]" aria-live="polite">
+          {connectionError ? (
+            <p className="text-lg text-yellow-200">
+              Tidak bisa terhubung ke server. Hubungi petugas.
+            </p>
+          ) : !session ? (
+            <p className="text-xl">Silakan lakukan pembayaran di kasir untuk memulai.</p>
+          ) : session.status === 'in_progress' ? (
+            <p className="text-xl text-yellow-200">
+              Sesi sebelumnya belum selesai. Hubungi petugas.
+            </p>
+          ) : (
+            <>
+              <p className="text-lg">✓ {session.packageName}</p>
+              <p className="text-lg">✓ Ambil {session.photosTaken} foto dengan hitung mundur</p>
+              <p className="text-lg">
+                ✓ Pilih {session.photosSelected} foto terbaik &amp; satu frame
+              </p>
+              <p className="text-lg">
+                ✓ Cetak 4R {session.printLayout === 'half' ? 'dibagi 2' : 'penuh'} &amp; unduh lewat QR
+              </p>
+            </>
+          )}
         </div>
       </div>
     </div>
