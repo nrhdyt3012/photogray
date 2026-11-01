@@ -3,7 +3,7 @@ import { useMachine } from '@xstate/react';
 import Webcam from 'react-webcam';
 import { fromPromise } from 'xstate';
 import { match } from 'ts-pattern';
-import { boothMachine } from '~/machines/boothMachine';
+import { boothMachine, TOTAL_PHOTOS } from '~/machines/boothMachine';
 import { stitchPhotos } from '~/lib/canvas-stitcher';
 import { uploadToCloudinary } from '~/lib/cloudinary-upload';
 import { generateBeepSound, generateShutterSound } from '~/lib/audio-utils';
@@ -14,6 +14,8 @@ import { CaptureView } from './views/CaptureView';
 import { ProcessingView } from './views/ProcessingView';
 import { SuccessView } from './views/SuccessView';
 import { FailureView } from './views/FailureView';
+import { PhotoSelectionView } from './views/PhotoSelectionView';
+import { FrameSelectionView } from './views/FrameSelectionView';
 
 export function BoothContainer() {
   const webcamRef = useRef<Webcam | null>(null);
@@ -169,17 +171,14 @@ useEffect(() => {
   // Render appropriate view based on state using pattern matching
   return match(state.value)
     .with('idle', () => (
-      <IdleView
-        onStart={() => send({ type: 'START' })}
-        onSelectFrame={(frameId: string) => send({ type: 'SELECT_FRAME', frameId })}
-        selectedFrameId={state.context.selectedFrameId}
-      />
+      <IdleView onStart={() => send({ type: 'START' })} />
     ))
     .with('countdown', () => (
       <CountdownView
         countdown={state.context.countdown}
         webcamRef={webcamRef}
         currentPhotoNumber={state.context.currentImageIndex + 1}
+        totalPhotos={TOTAL_PHOTOS}
         onWebcamReady={handleWebcamReady}
       />
     ))
@@ -192,6 +191,26 @@ useEffect(() => {
     .with('checkProgress', () => (
       <ProcessingView message="Processing..." />
     ))
+    .with('selecting', () => (
+      <PhotoSelectionView
+        images={state.context.images}
+        selectedIndexes={state.context.selectedIndexes}
+        onToggle={(index: number) => send({ type: 'TOGGLE_PHOTO', index })}
+        onConfirm={() => send({ type: 'CONFIRM_SELECTION' })}
+        onStartOver={() => send({ type: 'RESET' })}
+      />
+    ))
+    .with('framing', () => (
+      <FrameSelectionView
+        selectedImages={state.context.selectedIndexes.map(
+          (i) => state.context.images[i],
+        )}
+        selectedFrameId={state.context.selectedFrameId}
+        onSelectFrame={(frameId: string) => send({ type: 'SELECT_FRAME', frameId })}
+        onConfirm={() => send({ type: 'CONFIRM_FRAME' })}
+        onBack={() => send({ type: 'BACK' })}
+      />
+    ))
     .with('stitching', () => (
       <ProcessingView message="Creating your photo strip..." />
     ))
@@ -202,7 +221,7 @@ useEffect(() => {
       <SuccessView
         uploadUrl={state.context.uploadUrl!}
         publicId={state.context.publicId!}
-        images={state.context.images}
+        images={state.context.selectedIndexes.map((i) => state.context.images[i])}
         onReset={() => send({ type: 'RESET' })}
       />
     ))

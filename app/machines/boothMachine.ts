@@ -1,16 +1,21 @@
 import { assign, createMachine, fromPromise } from 'xstate';
 import { getDefaultFrame, getFrameById, type FrameConfig } from '~/lib/frame-config';
 
+// Jumlah foto yang diambil, dan jumlah foto yang dipilih untuk masuk frame
+export const TOTAL_PHOTOS = 10;
+export const REQUIRED_PHOTOS = 3;
+
 export interface BoothContext {
-  images: string[]; // base64 data URLs
-  currentImageIndex: number; // 0-2 for progress tracking
-  finalStripBlob: Blob | null; // local stitched image
+  images: string[]; // semua foto hasil jepretan (base64 data URLs), maks TOTAL_PHOTOS
+  currentImageIndex: number; // 0-9 untuk progress
+  selectedIndexes: number[]; // index foto terpilih, urutannya = urutan slot di frame
+  finalStripBlob: Blob | null; // hasil stitching lokal
   uploadUrl: string | null; // Cloudinary secure_url
-  publicId: string | null; // Cloudinary public_id for QR code
+  publicId: string | null; // Cloudinary public_id untuk QR code
   error: string | null;
-  countdown: number; // 3, 2, 1 for UI display
-  uploadRetries: number; // Track retry attempts
-  selectedFrameId: string; // Selected frame config ID
+  countdown: number; // 3, 2, 1 untuk tampilan UI
+  uploadRetries: number;
+  selectedFrameId: string;
 }
 
 export type BoothEvent =
@@ -19,22 +24,25 @@ export type BoothEvent =
   | { type: 'COUNTDOWN_DONE' }
   | { type: 'CAPTURE_DONE'; image: string }
   | { type: 'CAPTURE_ERROR'; error: string }
+  | { type: 'TOGGLE_PHOTO'; index: number }
+  | { type: 'CONFIRM_SELECTION' }
+  | { type: 'SELECT_FRAME'; frameId: string }
+  | { type: 'CONFIRM_FRAME' }
+  | { type: 'BACK' }
   | { type: 'STITCH_DONE'; blob: Blob }
   | { type: 'STITCH_ERROR'; error: string }
   | { type: 'UPLOAD_DONE'; url: string; publicId: string }
   | { type: 'UPLOAD_ERROR'; error: string }
   | { type: 'RETRY' }
-  | { type: 'RESET' }
-  | { type: 'SELECT_FRAME'; frameId: string };
+  | { type: 'RESET' };
 
-// Service types for invoked actors
 export interface CountdownInput {
   duration: number;
 }
 
 export interface StitchInput {
   images: string[];
-  frameConfig: FrameConfig; // Changed from frameUrl
+  frameConfig: FrameConfig;
 }
 
 export interface UploadInput {
@@ -54,6 +62,7 @@ export const boothMachine = createMachine(
     context: {
       images: [],
       currentImageIndex: 0,
+      selectedIndexes: [],
       finalStripBlob: null,
       uploadUrl: null,
       publicId: null,
@@ -67,6 +76,7 @@ export const boothMachine = createMachine(
         entry: assign({
           images: [],
           currentImageIndex: 0,
+          selectedIndexes: [],
           finalStripBlob: null,
           uploadUrl: null,
           publicId: null,
@@ -77,11 +87,6 @@ export const boothMachine = createMachine(
         }),
         on: {
           START: 'countdown',
-          SELECT_FRAME: {
-            actions: assign({
-              selectedFrameId: ({ event }) => event.frameId,
-            }),
-          },
         },
       },
 
@@ -108,8 +113,6 @@ export const boothMachine = createMachine(
       },
 
       capture: {
-        // The actual capture logic is handled externally via service override
-        // Machine just waits for CAPTURE_DONE or CAPTURE_ERROR events
         on: {
           CAPTURE_DONE: {
             actions: assign({
@@ -130,27 +133,67 @@ export const boothMachine = createMachine(
       checkProgress: {
         always: [
           {
-            guard: ({ context }) => context.images.length < 3,
+            guard: ({ context }) => context.images.length < TOTAL_PHOTOS,
             target: 'countdown',
           },
           {
-            guard: ({ context }) => context.images.length === 3,
-            target: 'stitching',
+            target: 'selecting',
           },
         ],
+      },
+
+      // Pilih 3 dari 10 foto
+      selecting: {
+        entry: assign({ selectedIndexes: [] }),
+        on: {
+          TOGGLE_PHOTO: {
+            actions: assign({
+              selectedIndexes: ({ context, event }) => {
+                const { selectedIndexes } = context;
+                if (selectedIndexes.includes(event.index)) {
+                  return selectedIndexes.filter((i) => i !== event.index);
+                }
+                if (selectedIndexes.length >= REQUIRED_PHOTOS) {
+                  return selectedIndexes;
+                }
+                return [...selectedIndexes, event.index];
+              },
+            }),
+          },
+          CONFIRM_SELECTION: {
+            guard: ({ context }) =>
+              context.selectedIndexes.length === REQUIRED_PHOTOS,
+            target: 'framing',
+          },
+          RESET: 'idle',
+        },
+      },
+
+      // Pilih frame, dengan preview dari 3 foto terpilih
+      framing: {
+        on: {
+          SELECT_FRAME: {
+            actions: assign({
+              selectedFrameId: ({ event }) => event.frameId,
+            }),
+          },
+          CONFIRM_FRAME: 'stitching',
+          BACK: 'selecting',
+        },
       },
 
       stitching: {
         invoke: {
           id: 'stitchService',
-          src: 'stitchPhotos', // Will be provided at runtime
+          src: 'stitchPhotos',
           input: ({ context }) => {
             const frameConfig = getFrameById(context.selectedFrameId);
             if (!frameConfig) {
               throw new Error(`Frame not found: ${context.selectedFrameId}`);
             }
             return {
-              images: context.images,
+              // Hanya 3 foto terpilih, sesuai urutan pilihan
+              images: context.selectedIndexes.map((i) => context.images[i]),
               frameConfig,
             };
           },
@@ -172,10 +215,11 @@ export const boothMachine = createMachine(
         },
       },
 
+      // Upload ke Cloudinary baru terjadi di sini, setelah foto & frame dipilih
       uploading: {
         invoke: {
           id: 'uploadService',
-          src: 'uploadToCloudinary', // Will be provided at runtime
+          src: 'uploadToCloudinary',
           input: ({ context }) => ({
             blob: context.finalStripBlob!,
             cloudName: import.meta.env.VITE_CLOUDINARY_CLOUD_NAME || '',
@@ -212,7 +256,7 @@ export const boothMachine = createMachine(
 
       success: {
         after: {
-          60000: 'idle', // Auto-reset after 60 seconds
+          60000: 'idle',
         },
         on: {
           RESET: 'idle',
@@ -227,7 +271,6 @@ export const boothMachine = createMachine(
     },
   },
   {
-    // Default implementations (can be overridden)
     actors: {
       stitchPhotos: fromPromise<Blob, StitchInput>(async () => {
         throw new Error('Stitch service not provided');

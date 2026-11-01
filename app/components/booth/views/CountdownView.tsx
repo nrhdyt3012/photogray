@@ -4,11 +4,12 @@ import type { RefObject } from 'react';
 interface CountdownViewProps {
   countdown: number;
   webcamRef: RefObject<Webcam | null>;
-  currentPhotoNumber: number; // 1, 2, or 3
+  currentPhotoNumber: number; // 1..totalPhotos
+  totalPhotos: number;
   onWebcamReady?: () => void;
 }
 
-export function CountdownView({ countdown, webcamRef, currentPhotoNumber, onWebcamReady }: CountdownViewProps) {
+export function CountdownView({ countdown, webcamRef, currentPhotoNumber, totalPhotos, onWebcamReady }: CountdownViewProps) {
   return (
     <div className="relative w-full h-screen bg-black flex items-center justify-center overflow-hidden">
       {/* Webcam preview (mirrored) */}
@@ -36,7 +37,7 @@ export function CountdownView({ countdown, webcamRef, currentPhotoNumber, onWebc
       <div className="absolute top-8 left-1/2 transform -translate-x-1/2 z-20">
         <div className="bg-white bg-opacity-90 px-6 py-3 rounded-full">
           <p className="text-xl font-semibold text-gray-800">
-            Photo {currentPhotoNumber} of 3
+            Photo {currentPhotoNumber} of {totalPhotos}
           </p>
         </div>
       </div>
